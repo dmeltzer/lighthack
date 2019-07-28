@@ -119,7 +119,7 @@ const String HANDSHAKE_REPLY = "OK";
 //See displayScreen() below - limited to 10 chars (after 6 prefix chars)
 #define VERSION_STRING      "2.0.0.1"
 
-#define BOX_NAME_STRING     "box1"
+#define BOX_NAME_STRING     "PS3_CONTROL"
 
 // Change these values to alter how long we wait before sending an OSC ping
 // to see if Eos is still there, and then finally how long before we
@@ -131,7 +131,7 @@ const String HANDSHAKE_REPLY = "OK";
 /*******************************************************************************
    Local Types
  ******************************************************************************/
-enum WHEEL_TYPE { TILT, PAN, ZOOM, FOCUS };
+enum WHEEL_TYPE { TILT, PAN, ZOOM, EDGE, INTENS };
 enum WHEEL_MODE { COARSE, FINE };
 
 enum ConsoleType
@@ -304,6 +304,9 @@ void sendEosWheelMove(WHEEL_TYPE type, float ticks)
     wheelMsg.concat("/zoom");
   else if (type == EDGE)
     wheelMsg.concat("/edge");
+  else if (type == INTENS)
+//    wheelMsg = String("/eos/at");
+    wheelMsg.concat("/intens");
   else
     // something has gone very wrong
     return;
@@ -323,8 +326,6 @@ void sendCobaltWheelMove(WHEEL_TYPE type, float ticks)
     // something has gone very wrong
     return;
 
-  if (digitalRead(SHIFT_BTN) != LOW)
-    ticks = ticks * 16;
 
   sendOscMessage(wheelMsg, ticks);
 }
@@ -340,9 +341,6 @@ void sendColorSourceWheelMove(WHEEL_TYPE type, float ticks)
   else
     // something has gone very wrong
     return;
-
-  if (digitalRead(SHIFT_BTN) != LOW)
-    ticks = ticks * 2;
 
   sendOscMessage(wheelMsg, ticks);
 }
@@ -440,7 +438,7 @@ void initPS3Controller()
 //  Serial.print(F("\r\nUSB Lib started."));
 }
 
-void handleParamMove(unit8_t stickPos, WHEEL_TYPE wheel)
+void handleParamMove(uint8_t stickPos, WHEEL_TYPE wheel)
 {
   // Joystick position is in the range of 0-255, with 117-137 being "home"
   // Let's make this uniform (there's probably a better way.
@@ -449,15 +447,7 @@ void handleParamMove(unit8_t stickPos, WHEEL_TYPE wheel)
   // Let's convert this to a value between 0 and 10.
   sendWheelMove(wheel, normValue / 127);
 }
-void handlePanMove(uint8_t stickPos)
-{
-  handleParamMove(stickPos, PAN);
-}
 
-void handleTiltMove(uint8_t stickPos)
-{
-  handleParamMove(stickPos, TILT);
-}
 /*******************************************************************************
    Here we setup our encoder, lcd, and various input devices. We also prepare
    to communicate OSC with Eos by setting up SLIPSerial. Once we are done with
@@ -494,8 +484,6 @@ void setup()
   issueEosSubscribes();
 
   initPS3Controller();
-//  initEncoder(&panWheel, A0, A1, PAN_DIR);
-//  initEncoder(&tiltWheel, A3, A4, TILT_DIR);
 }
 
 /*******************************************************************************
@@ -522,20 +510,27 @@ void loop()
   }
 
   uint8_t leftHatX = PS3.getAnalogHat(LeftHatX);
-  uint8_t leftHatY = PS3.getAnalogHat(LeftHatX);
-//  uint8_t rightHatX = PS3.getAnalogHat(LeftHatX);
-//  uint8_t rightHatY = PS3.getAnalogHat(LeftHatX);
+  uint8_t leftHatY = PS3.getAnalogHat(LeftHatY);
+  uint8_t rightHatX = PS3.getAnalogHat(RightHatX);
+  uint8_t rightHatY = PS3.getAnalogHat(RightHatY);
   if (leftHatX > 137 
     || leftHatX < 117) {
-      handlePanMove(leftHatX);
+      handleParamMove(leftHatX, PAN);
     }
-    if (leftHatY > 137 
-    || leftHatY < 117) {
-      handleTiltMove(leftHatY);
+//    if (leftHatY > 137 
+//    || leftHatY < 117) {
+//        handleParamMove(leftHatY, TILT);
+//    }
+//
+//    if (rightHatX > 137 
+//    || rightHatX < 117) {
+//        handleParamMove(rightHatX, EDGE);
+//    }
+    if (rightHatY > 137 
+    || rightHatY < 117) {
+        handleParamMove(-rightHatY, TILT);
     }
     
-//    || PS3.getAnalogHat(RightHatX) > 137 || PS3.getAnalogHat(RightHatX) < 117 || PS3.getAnalogHat(RightHatY) > 137 || PS3.getAnalogHat(RightHatY) < 117) {
-
   static String curMsg;
   int size;
 //  // get the updated state of each encoder
