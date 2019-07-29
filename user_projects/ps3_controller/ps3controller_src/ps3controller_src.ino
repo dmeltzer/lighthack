@@ -108,8 +108,9 @@ const String HANDSHAKE_REPLY = "OK";
 /*******************************************************************************
    Local Types
  ******************************************************************************/
-enum WHEEL_TYPE { TILT, PAN, ZOOM, EDGE, INTENS };
+enum WHEEL_TYPE { TILT, PAN, ZOOM, EDGE, THRUST, ANGLE };
 enum WHEEL_MODE { COARSE, FINE };
+enum SHUTTER { SHUTTER_A, SHUTTER_B, SHUTTER_C, SHUTTER_D };
 
 enum ConsoleType
 {
@@ -136,6 +137,7 @@ bool timeoutPingSent = false;
 USB Usb;
 PS3USB PS3(&Usb); // TODO bluetoothify
 ControllerMode activeMode;
+SHUTTER activeShutter;
 /*******************************************************************************
    Local Functions
  ******************************************************************************/
@@ -204,7 +206,6 @@ void setControllerMode(ControllerMode mode)
         PS3.setLedOn(LED2);
         break;
       case Shutter:
-//        offAllLeds();
         PS3.setLedOff();
         delay(50);
         PS3.setLedOn(LED1);
@@ -291,6 +292,19 @@ void sendOscMessage(const String &address, float value)
   SLIPSerial.endPacket();
 }
 
+String shutterString(SHUTTER shutter)
+{
+  switch (shutter) {
+    case SHUTTER_A:
+      return "A";
+    case SHUTTER_B:
+      return "B";
+    case SHUTTER_C:
+      return "C";
+    case SHUTTER_D:
+      return "D";
+  }
+}
 void sendEosWheelMove(WHEEL_TYPE type, float ticks)
 {
   String wheelMsg("/eos/wheel");
@@ -308,6 +322,10 @@ void sendEosWheelMove(WHEEL_TYPE type, float ticks)
     wheelMsg.concat("/zoom");
   else if (type == EDGE)
     wheelMsg.concat("/edge");
+  else if (type == THRUST)
+    wheelMsg.concat("/frame_thrust_"+shutterString(activeShutter));
+  else if (type == ANGLE)
+    wheelMsg.concat("/frame_angle_"+shutterString(activeShutter));
   else
     // something has gone very wrong
     return;
@@ -447,7 +465,18 @@ void checkButtons()
   }
   if (PS3.getButtonClick(SELECT)) {// Out
     sendOscCommand("/eos/macro/801/fire");
-  }  
+  } 
+  // If we're in shutter mode, allow assigning active shutter.
+  if (activeMode == Shutter) {
+      if(PS3.getButtonClick(UP))
+        activeShutter = SHUTTER_A;
+      if(PS3.getButtonClick(RIGHT))
+        activeShutter = SHUTTER_B;
+      if(PS3.getButtonClick(DOWN))
+        activeShutter = SHUTTER_C;
+      if(PS3.getButtonClick(LEFT))
+        activeShutter = SHUTTER_D;
+    }
   if (PS3.getButtonClick(PS)) { // Toggle Controller Mode
     switch(activeMode) {
       case PanTilt:
@@ -461,6 +490,7 @@ void checkButtons()
         setControllerMode(PanTilt);
         break;
     }
+
   }
 }
 
@@ -537,7 +567,7 @@ void setup()
 
   // If it's an Eos, request updates on some things
   issueEosSubscribes();
-
+  activeShutter = SHUTTER_A;
   initPS3Controller();
 }
 
@@ -574,6 +604,10 @@ void loop()
       leftStickParam = EDGE;
       rightStickParam = ZOOM;
       break;
+    case Shutter:
+      leftStickParam = THRUST;
+      rightStickParam = ANGLE;
+      break;
     case PanTilt:
     default:
       leftStickParam = PAN;
@@ -584,15 +618,7 @@ void loop()
     || leftHatX < 117) {
       handleParamMove(leftHatX, leftStickParam);
     }
-//    if (leftHatY > 137 
-//    || leftHatY < 117) {
-//        handleParamMove(leftHatY, TILT);
-//    }
-//
-//    if (rightHatX > 137 
-//    || rightHatX < 117) {
-//        handleParamMove(rightHatX, EDGE);
-//    }
+
     if (rightHatY > 137 
     || rightHatY < 117) {
         handleParamMove(-rightHatY, rightStickParam);
