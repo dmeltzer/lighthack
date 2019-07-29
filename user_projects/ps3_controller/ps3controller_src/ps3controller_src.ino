@@ -188,6 +188,24 @@ void issueEosSubscribes()
   SLIPSerial.endPacket();
 }
 
+/*******************************************************************************
+   This method toggles between the various "modes" that the controller operates in.
+
+   Currently this includes the following:
+    - PanTilt Mode: The left Joystick Drives Pan, the right Joystick Drives Tilt.
+      @TODO: L3/R3 Home P/T Respectively?
+    - FocusZoom Mode: The left Encoder Drives Edge, the right Joystick drives zoom.
+      @TODO: L3/R3 Home?
+    - Shutter Mode:
+      - D-Pad Allows Selecting Between various Shutters
+      - Left Joystick Drives Thrust, right Joystick Drives Angle.
+        @TODO: Buttons for Pairing Shutters?
+
+   Parameters:
+    ControllerMode - Mode to set the controller too.
+
+ ******************************************************************************/
+
 void setControllerMode(ControllerMode mode)
 {
   Serial.print(F("\r\nSetting To mode:"));
@@ -195,6 +213,7 @@ void setControllerMode(ControllerMode mode)
    activeMode = mode;
    switch(mode)
    {
+      //TODO: Debug why this doesn't work after the first setLedOn
       case PanTilt:
         PS3.setLedOff();
         delay(50);
@@ -273,24 +292,36 @@ void parseOSCMessage(String& msg)
 }
 
 /*******************************************************************************
-   Sends a message to Eos informing them of a wheel movement.
+   Sends an arbitrary OSC Message to Eos.
 
    Parameters:
-    type - the type of wheel that's moving (i.e. pan or tilt)
-    ticks - the direction and intensity of the movement
+    address - The OSC Message
+    value - Associated Value for the message.
 
    Return Value: void
 
  ******************************************************************************/
 
-void sendOscMessage(const String &address, float value)
+void sendOscMessage(const String &address, float value = NULL)
 {
   OSCMessage msg(address.c_str());
-  msg.add(value);
+  if( value != NULL)
+    msg.add(value);
   SLIPSerial.beginPacket();
   msg.send(SLIPSerial);
   SLIPSerial.endPacket();
 }
+
+/*******************************************************************************
+   Convenience Function to convert our shutter enum to the appropriate string for 
+   OSC
+
+   Parameters:
+    SHUTTER - Shutter in question
+
+   Return Value: String representation of the Shutter
+
+ ******************************************************************************/
 
 String shutterString(SHUTTER shutter)
 {
@@ -305,31 +336,51 @@ String shutterString(SHUTTER shutter)
       return "D";
   }
 }
+
+/*******************************************************************************
+   Sends a message to Eos informing them of a wheel movement.
+
+   Parameters:
+    type - the type of wheel that's moving (i.e. pan or tilt)
+    ticks - the direction and intensity of the movement
+
+   Return Value: void
+
+ ******************************************************************************/
+
 void sendEosWheelMove(WHEEL_TYPE type, float ticks)
 {
   String wheelMsg("/eos/wheel");
 
-  if (PS3.getButtonPress(R3))
-    wheelMsg.concat("/fine");
-  else
+//  if (PS3.getButtonPress(R3))
+//    wheelMsg.concat("/fine");
+//  else
     wheelMsg.concat("/coarse");
 
-  if (type == PAN)
-    wheelMsg.concat("/pan");
-  else if (type == TILT)
-    wheelMsg.concat("/tilt");
-  else if (type == ZOOM)
-    wheelMsg.concat("/zoom");
-  else if (type == EDGE)
-    wheelMsg.concat("/edge");
-  else if (type == THRUST)
-    wheelMsg.concat("/frame_thrust_"+shutterString(activeShutter));
-  else if (type == ANGLE)
-    wheelMsg.concat("/frame_angle_"+shutterString(activeShutter));
-  else
-    // something has gone very wrong
-    return;
-
+  switch (type) {
+    case PAN:
+      wheelMsg.concat("/pan");
+      break;
+    case TILT:
+      wheelMsg.concat("/tilt");
+      break;
+    case ZOOM:
+      wheelMsg.concat("/zoom");
+      break;
+    case EDGE:
+      wheelMsg.concat("/edge");
+      break;
+    case THRUST:
+      wheelMsg.concat("/frame_thrust_"+shutterString(activeShutter));
+      break;
+    case ANGLE:
+      wheelMsg.concat("/frame_angle_"+shutterString(activeShutter));
+      break;
+    default:
+      // something has gone very wrong
+      return;
+  }
+  
   sendOscMessage(wheelMsg, ticks);
 }
 
@@ -421,14 +472,6 @@ void sendKeyPress(bool down, const String &key)
   SLIPSerial.endPacket();
 }
 
-void sendOscCommand(const String &command)
-{
-  OSCMessage keyMsg(command.c_str());
-  SLIPSerial.beginPacket();
-  keyMsg.send(SLIPSerial);
-  SLIPSerial.endPacket();
-}
-
 /*******************************************************************************
    Checks the status of all the relevant buttons (i.e. Next & Last)
 
@@ -455,16 +498,16 @@ void checkButtons()
   }
 
   if (PS3.getButtonClick(R2)) {// Full
-    sendOscCommand("/eos/at/full");
+    sendOscMessage("/eos/at/full");
   }
   if (PS3.getButtonClick(L2)) {// Out
-    sendOscCommand("/eos/at/out");
+    sendOscMessage("/eos/at/out");
   }
   if (PS3.getButtonClick(START)) {// Out
-    sendOscCommand("/eos/macro/802/fire");
+    sendOscMessage("/eos/macro/802/fire");
   }
   if (PS3.getButtonClick(SELECT)) {// Out
-    sendOscCommand("/eos/macro/801/fire");
+    sendOscMessage("/eos/macro/801/fire");
   } 
   // If we're in shutter mode, allow assigning active shutter.
   if (activeMode == Shutter) {
@@ -504,12 +547,10 @@ void checkButtons()
 void initPS3Controller()
 {
   if (Usb.Init() == -1) {
-//    Serial.print(F("\r\nOSC Did not start"));
     while(1); // halt
   }
 
   setControllerMode(PanTilt);
-//  Serial.print(F("\r\nUSB Lib started."));
 }
 
 /*******************************************************************************
@@ -621,13 +662,13 @@ void loop()
 
     if (rightHatY > 137 
     || rightHatY < 117) {
-        handleParamMove(-rightHatY, rightStickParam);
+        handleParamMove(rightHatY, rightStickParam);
     }
     
   static String curMsg;
   int size;
 
-//  // check for next/last updates
+  // check for next/last updates
   checkButtons();
 
   // Then we check to see if any OSC commands have come from Eos
