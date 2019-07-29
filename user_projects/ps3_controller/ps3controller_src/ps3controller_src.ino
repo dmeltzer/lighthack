@@ -1,3 +1,5 @@
+// Copyright (c) 2019 Daniel Meltzer <dmeltzer.devel@gmail.com>
+// Based on the box1_usb sketch:
 // Copyright (c) 2017 Electronic Theatre Controls, Inc., http://www.etcconnect.com
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -23,16 +25,14 @@
 
      Electronic Theatre Controls
 
-     lighthack - Box 1
+     lighthack - PS3 Controller
 
-     (C) 2017-2018 by ETC
+     (C) 2019 by Daniel Meltzer <dmeltzer.devel@gmail.com>
 
 
-     This code implements a Pan/Tilt module using two encoders and three
-     buttons. The two encoders function as pan and tilt controllers with one
-     button being reserved for controlling fine/coarse mode. The other two
-     buttons are assigned to Next and Last which make it easy to switch between
-     channels.
+     This code implements basic control of Eos parameters using a PS3 Controller.
+     Current Pan/Tilt and Next/Last are supported.  Future goals include Edge and 
+     Shutters, with an ultimate purpose of simplifying ML focus updates.
 
  *******************************************************************************
 
@@ -42,25 +42,7 @@
 
     yyyy-mm-dd   Vxx      By_Who                 Comment
 
-    2017-07-21   1.0.0.1  Ethan Oswald Massey    Original creation
-
-    2017-10-19   1.0.0.2  Sam Kearney            Fix build errors on some
-                                                 Arduino platforms. Change
-                                                 OSC subscribe parameters
-
-    2017-10-24   1.0.0.3  Sam Kearney            Add ability to scale encoder
-                                                 output
-
-    2017-11-22   1.0.0.4  Hans Hinrichsen        Add splash msg before Eos
-                                                 connects
-
-    2017-12-07   1.0.0.5  Hans Hinrichsen        Added timeout to disconnect
-                                                 and show splash screen again
-
-    2018-10-25   2.0.0.0  Richard Thompson       Generalised to support other
-                                                 ETC consoles
-
-    2018-10-25   2.0.0.1  Richard Thompson       Add basic support for ColorSource
+    2019-07-28   0.0.1    Daniel Meltzer         Initial Version.
 
  ******************************************************************************/
 
@@ -86,9 +68,6 @@ SLIPEncodedSerial SLIPSerial(Serial);
 /*******************************************************************************
    Macros and Constants
  ******************************************************************************/
-USB Usb;
-PS3USB PS3(&Usb); // TODO bluetoothify
-
 #define SUBSCRIBE           ((int32_t)1)
 #define UNSUBSCRIBE         ((int32_t)0)
 
@@ -109,15 +88,13 @@ PS3USB PS3(&Usb); // TODO bluetoothify
 #define PAN_SCALE           1
 #define TILT_SCALE          1
 
-#define SIG_DIGITS          3   // Number of significant digits displayed
-
 #define OSC_BUF_MAX_SIZE    512
 
 const String HANDSHAKE_QUERY = "ETCOSC?";
 const String HANDSHAKE_REPLY = "OK";
 
 //See displayScreen() below - limited to 10 chars (after 6 prefix chars)
-#define VERSION_STRING      "2.0.0.1"
+#define VERSION_STRING      "0.0.1"
 
 #define BOX_NAME_STRING     "PS3_CONTROL"
 
@@ -142,16 +119,23 @@ enum ConsoleType
   ConsoleColorSource
 };
 
+enum ControllerMode
+{
+  PanTilt,
+  FocusZoom,
+  Shutter
+};
+
 /*******************************************************************************
    Global Variables
  ******************************************************************************/
 
-
-bool updateDisplay = false;
 ConsoleType connectedToConsole = ConsoleNone;
 unsigned long lastMessageRxTime = 0;
 bool timeoutPingSent = false;
-
+USB Usb;
+PS3USB PS3(&Usb); // TODO bluetoothify
+ControllerMode activeMode;
 /*******************************************************************************
    Local Functions
  ******************************************************************************/
@@ -171,6 +155,7 @@ void issueEosSubscribes()
   OSCMessage filter("/eos/filter/add");
   filter.add("/eos/out/param/*");
   filter.add("/eos/out/ping");
+  filter.add("/eos/out/active/wheel/*");
   SLIPSerial.beginPacket();
   filter.send(SLIPSerial);
   SLIPSerial.endPacket();
@@ -201,6 +186,31 @@ void issueEosSubscribes()
   SLIPSerial.endPacket();
 }
 
+void setControllerMode(ControllerMode mode)
+{
+  Serial.print(F("\r\nSetting To mode:"));
+  Serial.print(mode);
+   activeMode = mode;
+   switch(mode)
+   {
+      case PanTilt:
+        PS3.setLedOff();
+        delay(50);
+        PS3.setLedOn(LED1);
+        break;
+      case FocusZoom:
+        PS3.setLedOff();
+        delay(50);
+        PS3.setLedOn(LED2);
+        break;
+      case Shutter:
+//        offAllLeds();
+        PS3.setLedOff();
+        delay(50);
+        PS3.setLedOn(LED1);
+   }
+}
+
 /*******************************************************************************
    Given a valid OSCMessage (relevant to Pan/Tilt), we update our Encoder struct
    with the new position information.
@@ -220,11 +230,7 @@ void parseEos(OSCMessage& msg, int addressOffset)
   {
     issueEosSubscribes();
     connectedToConsole = ConsoleEos;
-    updateDisplay = true;
   }
-//
-//  if (!msg.route("/out/param/pan", parseFloatPanUpdate, addressOffset))
-//    msg.route("/out/param/tilt", parseFloatTiltUpdate, addressOffset);
 }
 
 /*******************************************************************************
@@ -251,8 +257,6 @@ void parseOSCMessage(String& msg)
     // An Eos would do nothing until subscribed
     // Let Eos know we want updates on some things
     issueEosSubscribes();
-
-    updateDisplay = true;
   }
   else
   {
@@ -304,9 +308,6 @@ void sendEosWheelMove(WHEEL_TYPE type, float ticks)
     wheelMsg.concat("/zoom");
   else if (type == EDGE)
     wheelMsg.concat("/edge");
-  else if (type == INTENS)
-//    wheelMsg = String("/eos/at");
-    wheelMsg.concat("/intens");
   else
     // something has gone very wrong
     return;
@@ -402,6 +403,14 @@ void sendKeyPress(bool down, const String &key)
   SLIPSerial.endPacket();
 }
 
+void sendOscCommand(const String &command)
+{
+  OSCMessage keyMsg(command.c_str());
+  SLIPSerial.beginPacket();
+  keyMsg.send(SLIPSerial);
+  SLIPSerial.endPacket();
+}
+
 /*******************************************************************************
    Checks the status of all the relevant buttons (i.e. Next & Last)
 
@@ -426,7 +435,41 @@ void checkButtons()
     delay(20);
     sendKeyPress(false, "LAST");
   }
+
+  if (PS3.getButtonClick(R2)) {// Full
+    sendOscCommand("/eos/at/full");
+  }
+  if (PS3.getButtonClick(L2)) {// Out
+    sendOscCommand("/eos/at/out");
+  }
+  if (PS3.getButtonClick(START)) {// Out
+    sendOscCommand("/eos/macro/802/fire");
+  }
+  if (PS3.getButtonClick(SELECT)) {// Out
+    sendOscCommand("/eos/macro/801/fire");
+  }  
+  if (PS3.getButtonClick(PS)) { // Toggle Controller Mode
+    switch(activeMode) {
+      case PanTilt:
+        setControllerMode(FocusZoom);
+        break;
+      case FocusZoom:
+        setControllerMode(Shutter);
+        break;
+      case Shutter:
+      default:
+        setControllerMode(PanTilt);
+        break;
+    }
+  }
 }
+
+/*******************************************************************************
+   Initializes Connection to PS3 Controller and sets up the world.
+
+   Return Value: void
+
+ ******************************************************************************/
 
 void initPS3Controller()
 {
@@ -435,9 +478,21 @@ void initPS3Controller()
     while(1); // halt
   }
 
+  setControllerMode(PanTilt);
 //  Serial.print(F("\r\nUSB Lib started."));
 }
 
+/*******************************************************************************
+   Generic function to respond to joystick actions.
+
+   Parameters:
+    - stickPos: Current Joystick position between 0-255
+    - wheel: WHEEL_TYPE parameter.
+
+   Return Value: void
+
+ ******************************************************************************/
+ 
 void handleParamMove(uint8_t stickPos, WHEEL_TYPE wheel)
 {
   // Joystick position is in the range of 0-255, with 117-137 being "home"
@@ -504,8 +559,6 @@ void loop()
 {
   Usb.Task();
   if (!PS3.PS3Connected) {
-//    Serial.print(F("\r\nNO PS3 Controller Connected."));
-
     return; // No Controller Connected
   }
 
@@ -513,9 +566,23 @@ void loop()
   uint8_t leftHatY = PS3.getAnalogHat(LeftHatY);
   uint8_t rightHatX = PS3.getAnalogHat(RightHatX);
   uint8_t rightHatY = PS3.getAnalogHat(RightHatY);
+
+  WHEEL_TYPE leftStickParam;
+  WHEEL_TYPE rightStickParam;
+  switch(activeMode) {
+    case FocusZoom:
+      leftStickParam = EDGE;
+      rightStickParam = ZOOM;
+      break;
+    case PanTilt:
+    default:
+      leftStickParam = PAN;
+      rightStickParam = TILT;
+      break;
+  }
   if (leftHatX > 137 
     || leftHatX < 117) {
-      handleParamMove(leftHatX, PAN);
+      handleParamMove(leftHatX, leftStickParam);
     }
 //    if (leftHatY > 137 
 //    || leftHatY < 117) {
@@ -528,29 +595,15 @@ void loop()
 //    }
     if (rightHatY > 137 
     || rightHatY < 117) {
-        handleParamMove(-rightHatY, TILT);
+        handleParamMove(-rightHatY, rightStickParam);
     }
     
   static String curMsg;
   int size;
-//  // get the updated state of each encoder
-//  int32_t panMotion = updateEncoder(&panWheel);
-//  int32_t tiltMotion = updateEncoder(&tiltWheel);
-//
-//  // Scale the result by a scaling factor
-//  panMotion *= PAN_SCALE;
-//  tiltMotion *= TILT_SCALE;
-//
+
 //  // check for next/last updates
   checkButtons();
-//
-//  // now update our wheels
-//  if (tiltMotion != 0)
-//    sendWheelMove(TILT, tiltMotion);
-//
-//  if (panMotion != 0)
-//    sendWheelMove(PAN, panMotion);
-//
+
   // Then we check to see if any OSC commands have come from Eos
   // and update the display accordingly.
   size = SLIPSerial.available();
@@ -578,7 +631,6 @@ void loop()
     {
       connectedToConsole = ConsoleNone;
       lastMessageRxTime = 0;
-      updateDisplay = true;
       timeoutPingSent = false;
     }
 
@@ -595,8 +647,5 @@ void loop()
     }
   }
 
-  delay(10);
+  delay(40);
 }
-//
-//  if (updateDisplay)
-//    displayStatus();
